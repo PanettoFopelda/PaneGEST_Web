@@ -1,0 +1,538 @@
+﻿@page "/movimentos"
+@layout PaneGEST_Blazor_MySQL.Components.Layout.EmptyLayout
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PaneGEST_Blazor_MySQL.Models
+@inject WwwpanetPaneGestContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Registo de Movimentos</PageTitle>
+
+<div class="page-container">
+
+    <!-- ÁREA PRINCIPAL -->
+    <div class="split-container">
+
+        <!-- PAINEL ESQUERDO: FILTROS + GRELHA -->
+        <div class="left-panel">
+
+            <!-- BARRA DE FILTROS -->
+            <div class="filter-bar">
+                <div class="filter-item">
+                    <label>Loja:</label>
+                    <select class="filter-input" @bind="filtroLojaId">
+                        <option value="0">--- TODAS ---</option>
+                        @foreach (var l in ListaLojasCombo)
+                        {
+                            <option value="@l.IdLoja">@l.NomeLoja</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="filter-item">
+                    <label>De:</label>
+                    <input type="date" class="filter-input" @bind="filtroDataIni" />
+                </div>
+
+                <div class="filter-item">
+                    <label>Até:</label>
+                    <input type="date" class="filter-input" @bind="filtroDataFim" />
+                </div>
+
+                <button class="btn-pesquisar" @onclick="CarregarDados">🔍</button>
+            </div>
+
+            <!-- TABELA -->
+            <div class="table-container">
+                <table class="custom-table">
+                    <thead>
+                        <tr>
+                            <th style="cursor: pointer" @onclick='() => Ordenar("data")'>
+                                Data @(sortColumn == "data" ? (isAscending ? "▲" : "▼") : "")
+                            </th>
+                            <th style="cursor: pointer" @onclick='() => Ordenar("loja")'>
+                                Loja @(sortColumn == "loja" ? (isAscending ? "▲" : "▼") : "")
+                            </th>
+                            <th style="text-align: right; cursor: pointer" @onclick='() => Ordenar("von")'>
+                                On @(sortColumn == "von" ? (isAscending ? "▲" : "▼") : "")
+                            </th>
+                            <th style="text-align: right; cursor: pointer" @onclick='() => Ordenar("voff")'>
+                                Off @(sortColumn == "voff" ? (isAscending ? "▲" : "▼") : "")
+                            </th>
+                            <th style="text-align: right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in ListaMovimentos)
+                        {
+                            <tr class="@(m.IdMovimento == movSelecionado?.IdMovimento ? "selected" : "")"
+                                @onclick="() => SelecionarMovimento(m)">
+
+                                <td style="text-align: center;">@m.DataMovimento.ToString("dd-MM-yyyy")</td>
+
+                                <!-- Correção: Busca o nome da loja manualmente -->
+                                <td>@GetNomeLoja(m.IdLoja)</td>
+
+                                <!-- Correção: Conversão explícita de double para decimal para formatar moeda -->
+                                <td style="text-align: right; color: green; font-weight: 500;">
+                                    @(((decimal)m.ValorOn).ToString("C2"))
+                                </td>
+                                <td style="text-align: right; color: #B22222; font-weight: 500;">
+                                    @(((decimal)m.ValorOff).ToString("C2"))
+                                </td>
+                                <td style="text-align: right; font-weight: bold;">
+                                    @(((decimal)(m.ValorOn + m.ValorOff)).ToString("C2"))
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- PAINEL DIREITO: FORMULÁRIO -->
+        <div class="right-panel">
+            <h3 class="form-title">Detalhes do Movimento</h3>
+
+            <!-- Loja -->
+            <div class="form-group">
+                <label>Loja:</label>
+                <select class="form-control" @bind="formLojaId" disabled="@(!emEdicao)">
+                    <option value="0">Selecione...</option>
+                    @foreach (var l in ListaLojasCombo)
+                    {
+                        <option value="@l.IdLoja">@l.NomeLoja</option>
+                    }
+                </select>
+            </div>
+
+            <!-- Data -->
+            <div class="form-group">
+                <label>Data:</label>
+                <input type="date" class="form-control" @bind="formData" disabled="@(!emEdicao)" />
+            </div>
+
+            <!-- Valores -->
+            <div class="form-group">
+                <label>Valor ON (€):</label>
+                <input type="number" step="0.01" class="form-control" @bind="formValOn" disabled="@(!emEdicao)" />
+            </div>
+
+            <div class="form-group">
+                <label>Valor OFF (€):</label>
+                <input type="number" step="0.01" class="form-control" @bind="formValOff" disabled="@(!emEdicao)" />
+            </div>
+
+            <!-- Observações -->
+            <div class="form-group">
+                <label>Observações:</label>
+                <textarea class="form-control" rows="3" @bind="formObs" disabled="@(!emEdicao)"></textarea>
+            </div>
+
+            @if (emEdicao)
+            {
+                <div class="form-buttons">
+                    <button class="btn btn-action" @onclick="Guardar">💾 Guardar</button>
+                    <button class="btn btn-danger" @onclick="Cancelar">❌ Cancelar</button>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- BARRA INFERIOR -->
+    <div class="bottom-bar">
+        <div class="left-actions">
+            <button class="btn btn-primary" @onclick="Novo" disabled="@emEdicao">➕ Novo</button>
+            <button class="btn btn-action" @onclick="Editar" disabled="@(emEdicao || movSelecionado == null)">✏️ Editar</button>
+            <button class="btn btn-danger" @onclick="Apagar" disabled="@(emEdicao || movSelecionado == null)">🗑️ Apagar</button>
+        </div>
+
+        <div class="right-actions">
+            <button class="btn btn-voltar" @onclick="Voltar">⬅ Voltar</button>
+        </div>
+    </div>
+
+</div>
+
+<style>
+    /* --- CSS IGUAL AO ANTERIOR --- */
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    .split-container {
+        flex-grow: 1;
+        display: flex;
+        overflow: hidden;
+    }
+
+    .left-panel {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #ddd;
+        background-color: white;
+    }
+
+    .filter-bar {
+        padding: 10px;
+        background-color: #f5f5f5;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .filter-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.9rem;
+    }
+
+    .filter-input {
+        padding: 5px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+    .btn-pesquisar {
+        padding: 5px 15px;
+        background-color: #0d6efd;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1.1rem;
+    }
+
+    .table-container {
+        flex-grow: 1;
+        overflow-y: auto;
+    }
+
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+        .custom-table th {
+            background-color: #f1f1f1;
+            padding: 10px;
+            text-align: left;
+            border-bottom: 2px solid #ddd;
+            position: sticky;
+            top: 0;
+            user-select: none;
+            font-size: 0.9rem;
+        }
+
+        .custom-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }
+
+        .custom-table tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        .custom-table tr.selected {
+            background-color: #e0efff;
+            border-left: 4px solid #28A745;
+        }
+
+    .right-panel {
+        width: 340px;
+        padding: 20px;
+        background-color: white;
+        box-shadow: -2px 0 5px rgba(0,0,0,0.05);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-title {
+        color: #28A745;
+        margin-bottom: 15px;
+        font-size: 1.4rem;
+    }
+
+    .form-group {
+        margin-bottom: 12px;
+    }
+
+        .form-group label {
+            display: block;
+            color: gray;
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+        }
+
+    .form-control {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+        .form-control:disabled {
+            background-color: #f5f5f5;
+        }
+
+    .form-buttons {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+    }
+
+    .bottom-bar {
+        height: 70px;
+        background-color: #DCDCDC;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        border-top: 1px solid #ccc;
+        flex-shrink: 0;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+        color: white;
+        font-size: 10pt;
+    }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: gray;
+        }
+
+    .btn-primary {
+        background-color: #0d6efd;
+    }
+
+    .btn-action {
+        background-color: #198754;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+    }
+
+    .btn-voltar {
+        background-color: #B22222;
+    }
+
+    .left-actions {
+        display: flex;
+        gap: 15px;
+    }
+</style>
+
+@code {
+    // DADOS
+    private List<Movimento> ListaMovimentos = new();
+    private List<Loja> ListaLojasCombo = new();
+    private Movimento? movSelecionado;
+
+    // FILTROS (Atenção: DateOnly)
+    private int filtroLojaId = 0;
+    private DateTime filtroDataIni = DateTime.Now.AddDays(-30); // DateTime para o input
+    private DateTime filtroDataFim = DateTime.Now;
+
+    // FORMULÁRIO
+    private int formLojaId = 0;
+    private DateOnly formData = DateOnly.FromDateTime(DateTime.Now); // DateOnly para a BD
+    private decimal formValOn = 0;
+    private decimal formValOff = 0;
+    private string formObs = "";
+
+    // ESTADOS
+    private bool emEdicao = false;
+    private bool novoRegisto = false;
+
+    // ORDENAÇÃO
+    private string sortColumn = "data";
+    private bool isAscending = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Carregar Combo de Lojas
+        ListaLojasCombo = await Db.Lojas.OrderBy(l => l.NomeLoja).ToListAsync();
+        await CarregarDados();
+    }
+
+    // Helper para obter nome da loja sem usar Navigation Property
+    private string GetNomeLoja(int idLoja)
+    {
+        var loja = ListaLojasCombo.FirstOrDefault(l => l.IdLoja == idLoja);
+        return loja?.NomeLoja ?? "-";
+    }
+
+    private async Task CarregarDados()
+    {
+        // 1. Carrega os dados da tabela Movimentos
+        var query = Db.Movimentos.AsQueryable();
+
+        if (filtroLojaId > 0)
+        {
+            query = query.Where(m => m.IdLoja == filtroLojaId);
+        }
+
+        // Converter Filtros de DateTime para DateOnly para comparar com a BD
+        DateOnly dIni = DateOnly.FromDateTime(filtroDataIni);
+        DateOnly dFim = DateOnly.FromDateTime(filtroDataFim);
+
+        query = query.Where(m => m.DataMovimento >= dIni && m.DataMovimento <= dFim);
+
+        var dados = await query.ToListAsync();
+        AplicarOrdenacao(dados);
+    }
+
+    private void Ordenar(string coluna)
+    {
+        if (sortColumn == coluna) isAscending = !isAscending;
+        else { sortColumn = coluna; isAscending = true; }
+
+        AplicarOrdenacao(ListaMovimentos);
+    }
+
+    private void AplicarOrdenacao(List<Movimento> lista)
+    {
+        switch (sortColumn)
+        {
+            case "data":
+                ListaMovimentos = isAscending ? lista.OrderBy(m => m.DataMovimento).ToList() : lista.OrderByDescending(m => m.DataMovimento).ToList();
+                break;
+            case "loja":
+                // Ordenar pelo nome da loja usando o Helper
+                ListaMovimentos = isAscending
+                    ? lista.OrderBy(m => GetNomeLoja(m.IdLoja)).ToList()
+                    : lista.OrderByDescending(m => GetNomeLoja(m.IdLoja)).ToList();
+                break;
+            case "von":
+                ListaMovimentos = isAscending ? lista.OrderBy(m => m.ValorOn).ToList() : lista.OrderByDescending(m => m.ValorOn).ToList();
+                break;
+            case "voff":
+                ListaMovimentos = isAscending ? lista.OrderBy(m => m.ValorOff).ToList() : lista.OrderByDescending(m => m.ValorOff).ToList();
+                break;
+        }
+    }
+
+    private void SelecionarMovimento(Movimento m)
+    {
+        if (emEdicao) return;
+
+        movSelecionado = m;
+        formLojaId = m.IdLoja;
+        formData = m.DataMovimento;
+
+        // Conversão segura de double (BD) para decimal (Formulário)
+        formValOn = (decimal)m.ValorOn;
+        formValOff = (decimal)m.ValorOff;
+
+        formObs = m.Observacoes ?? "";
+    }
+
+    private void Novo()
+    {
+        movSelecionado = new Movimento();
+        formLojaId = 0;
+        formData = DateOnly.FromDateTime(DateTime.Now);
+        formValOn = 0; formValOff = 0; formObs = "";
+
+        novoRegisto = true; emEdicao = true;
+    }
+
+    private void Editar()
+    {
+        if (movSelecionado == null) return;
+        novoRegisto = false; emEdicao = true;
+    }
+
+    private async Task Apagar()
+    {
+        if (movSelecionado == null) return;
+        if (await JS.InvokeAsync<bool>("confirm", "Apagar este movimento?"))
+        {
+            Db.Movimentos.Remove(movSelecionado);
+            await Db.SaveChangesAsync();
+            movSelecionado = null;
+            await CarregarDados();
+        }
+    }
+
+    private async Task Guardar()
+    {
+        if (formLojaId == 0) { await JS.InvokeVoidAsync("alert", "Selecione a Loja."); return; }
+
+        try
+        {
+            if (novoRegisto)
+            {
+                var novo = new Movimento
+                {
+                    IdLoja = formLojaId,
+                    DataMovimento = formData,
+                    ValorOn = (double)formValOn,   // Cast Decimal -> Double
+                    ValorOff = (double)formValOff, // Cast Decimal -> Double
+                    Observacoes = formObs
+                };
+                Db.Movimentos.Add(novo);
+            }
+            else
+            {
+                var dbMov = await Db.Movimentos.FindAsync(movSelecionado!.IdMovimento);
+                if (dbMov != null)
+                {
+                    dbMov.IdLoja = formLojaId;
+                    dbMov.DataMovimento = formData;
+                    dbMov.ValorOn = (double)formValOn;
+                    dbMov.ValorOff = (double)formValOff;
+                    dbMov.Observacoes = formObs;
+                }
+            }
+
+            await Db.SaveChangesAsync();
+
+            emEdicao = false; novoRegisto = false; movSelecionado = null;
+            formLojaId = 0; formValOn = 0; formValOff = 0; formObs = "";
+
+            await CarregarDados();
+        }
+        catch (Exception ex) { await JS.InvokeVoidAsync("alert", "Erro: " + ex.Message); }
+    }
+
+    private void Cancelar()
+    {
+        emEdicao = false; novoRegisto = false;
+        if (movSelecionado != null && movSelecionado.IdMovimento > 0)
+        {
+            formLojaId = movSelecionado.IdLoja;
+            formData = movSelecionado.DataMovimento;
+            formValOn = (decimal)movSelecionado.ValorOn;
+            formValOff = (decimal)movSelecionado.ValorOff;
+            formObs = movSelecionado.Observacoes ?? "";
+        }
+        else
+        {
+            movSelecionado = null;
+            formLojaId = 0; formValOn = 0; formValOff = 0; formObs = "";
+        }
+    }
+
+    private void Voltar() => Nav.NavigateTo("/dashboard");
+}

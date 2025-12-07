@@ -1,0 +1,446 @@
+﻿@page "/relatorios/mensal"
+@layout PaneGEST_Blazor_MySQL.Components.Layout.EmptyLayout
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PaneGEST_Blazor_MySQL.Models
+@using QuestPDF.Fluent
+@using QuestPDF.Helpers
+@using QuestPDF.Infrastructure
+@using System.Globalization
+@using System.IO
+@using ApexCharts
+@inject WwwpanetPaneGestContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Evolução Mensal</PageTitle>
+
+<div class="page-container">
+
+    <!-- TOPO: Filtros -->
+    <div class="top-panel">
+        <div class="filter-row">
+
+            <div class="filter-item">
+                <label>Ano:</label>
+                <input type="number" class="form-control" @bind="anoSelecionado" min="2000" max="2100" style="width: 100px;" />
+            </div>
+
+            <div class="filter-item" style="flex-grow: 1; max-width: 300px;">
+                <label>Loja:</label>
+                <select class="form-control" @bind="lojaSelecionadaId">
+                    <option value="0">--- TODAS ---</option>
+                    @foreach (var l in ListaLojas)
+                    {
+                        <option value="@l.IdLoja">@l.NomeLoja</option>
+                    }
+                </select>
+            </div>
+
+            <button class="btn btn-primary" @onclick="Pesquisar">🔍 Analisar</button>
+
+            <!-- Botão Gráfico -->
+            <button class="btn btn-secondary ms-2" @onclick="() => mostrarGrafico = !mostrarGrafico">
+                @(mostrarGrafico ? "🚫 Ocultar Gráfico" : "📊 Ver Gráfico")
+            </button>
+
+        </div>
+    </div>
+
+    <!-- ÁREA DO GRÁFICO (Colapsável) -->
+    @if (mostrarGrafico && ListaMensal.Count > 0)
+    {
+        <div class="chart-panel">
+            <ApexChart TItem="MensalItem"
+                       Title="@($"Evolução Mensal - {anoSelecionado}")"
+                       Height="350">
+
+                <!-- Série Verde (Entradas) -->
+                <ApexPointSeries TItem="MensalItem"
+                                 Items="ListaMensal"
+                                 Name="Entradas (ON)"
+                                 SeriesType="SeriesType.Bar"
+                                 XValue="@(e => e.MesNome)"
+                                 YValue="@(e => e.Entradas)"
+                                 Color="#198754" />
+
+                <!-- Série Vermelha (Saídas) -->
+                <ApexPointSeries TItem="MensalItem"
+                                 Items="ListaMensal"
+                                 Name="Saídas (OFF)"
+                                 SeriesType="SeriesType.Bar"
+                                 XValue="@(e => e.MesNome)"
+                                 YValue="@(e => e.Saidas)"
+                                 Color="#dc3545" />
+            </ApexChart>
+        </div>
+    }
+
+    <!-- MEIO: Tabela -->
+    <div class="grid-panel">
+        <table class="custom-table">
+            <thead>
+                <tr>
+                    <th style="width: 25%; text-align: left;">Mês</th>
+                    <th style="width: 25%; text-align: right;">Entradas (ON)</th>
+                    <th style="width: 25%; text-align: right;">Saídas (OFF)</th>
+                    <th style="width: 25%; text-align: right;">Total Global</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (ListaMensal == null)
+                {
+                    <tr><td colspan="4" class="text-center p-3">A analisar...</td></tr>
+                }
+                else if (ListaMensal.Count == 0)
+                {
+                    <tr><td colspan="4" class="text-center p-3 text-muted">Sem dados para este ano.</td></tr>
+                }
+                else
+                {
+                    @foreach (var item in ListaMensal)
+                    {
+                        <tr>
+                            <td style="font-weight: 500;">@item.MesNome</td>
+                            <td class="valor-on">@item.Entradas.ToString("C2")</td>
+                            <td class="valor-off">@item.Saidas.ToString("C2")</td>
+                            <td class="valor-global">@item.VolumeTotal.ToString("C2")</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+            <!-- Rodapé (Totais do Ano) -->
+            <tfoot>
+                <tr style="background-color: #e9ecef; font-weight: bold; border-top: 2px solid #ccc;">
+                    <td style="text-align: right; padding-right: 20px;">TOTAIS DO ANO:</td>
+                    <td style="text-align: right; color: #198754;">@TotalAnoEntradas.ToString("C2")</td>
+                    <td style="text-align: right; color: #dc3545;">@TotalAnoSaidas.ToString("C2")</td>
+                    <td style="text-align: right; color: #0d6efd; font-size: 1.1em;">@TotalAnoGlobal.ToString("C2")</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    <!-- RODAPÉ: Botões -->
+    <div class="bottom-panel">
+        <button class="btn btn-pdf" @onclick="GerarPDF">🖨️ Gerar PDF / Imprimir</button>
+        <button class="btn btn-back" @onclick="Voltar">🔙 Voltar</button>
+    </div>
+
+</div>
+
+<style>
+    /* CSS Base */
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-family: 'Segoe UI', sans-serif;
+        background-color: white;
+    }
+
+    .top-panel {
+        padding: 15px 20px;
+        background-color: white;
+        border-bottom: 1px solid #ccc;
+        flex-shrink: 0;
+    }
+
+    /* Painel Gráfico */
+    .chart-panel {
+        background-color: white;
+        padding: 10px 20px;
+        border-bottom: 1px solid #ddd;
+        flex-shrink: 0;
+    }
+
+    .filter-row {
+        display: flex;
+        gap: 20px;
+        align-items: flex-end;
+    }
+
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+        .filter-item label {
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #333;
+        }
+
+    .form-control {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+    .grid-panel {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 0;
+    }
+
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+        .custom-table th {
+            background-color: #4682B4;
+            color: white;
+            padding: 10px;
+            position: sticky;
+            top: 0;
+            user-select: none;
+            font-size: 0.95rem;
+        }
+
+        .custom-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #eee;
+            font-size: 0.95rem;
+            vertical-align: middle;
+        }
+
+        .custom-table tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        .custom-table tr:hover {
+            background-color: #eef;
+        }
+
+    .valor-on {
+        text-align: right;
+        color: #198754;
+    }
+
+    .valor-off {
+        text-align: right;
+        color: #dc3545;
+    }
+
+    .valor-global {
+        text-align: right;
+        color: #000080;
+        font-weight: bold;
+    }
+
+    .bottom-panel {
+        padding: 15px 20px;
+        background-color: #D3D3D3;
+        display: flex;
+        justify-content: space-between;
+        border-top: 1px solid #aaa;
+        flex-shrink: 0;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+        color: white;
+    }
+
+    .btn-primary {
+        background-color: #0d6efd;
+        height: 38px;
+    }
+
+    .btn-secondary {
+        background-color: #6c757d;
+        height: 38px;
+    }
+
+    .btn-pdf {
+        background-color: #198754;
+    }
+
+    .btn-back {
+        background-color: #CD5C5C;
+    }
+
+    .btn:hover {
+        opacity: 0.9;
+    }
+</style>
+
+@code {
+    // --- VIEW MODEL ---
+    public class MensalItem
+    {
+        public int MesNum { get; set; }
+        public string MesNome { get; set; } = "";
+        public decimal Entradas { get; set; }
+        public decimal Saidas { get; set; }
+        public decimal VolumeTotal => Entradas + Saidas;
+    }
+
+    // --- ESTADO ---
+    private List<Loja> ListaLojas = new();
+    private List<MensalItem> ListaMensal = new();
+
+    private int anoSelecionado;
+    private int lojaSelecionadaId = 0;
+    private bool mostrarGrafico = false;
+
+    // --- TOTAIS ---
+    private decimal TotalAnoEntradas => ListaMensal.Sum(m => m.Entradas);
+    private decimal TotalAnoSaidas => ListaMensal.Sum(m => m.Saidas);
+    private decimal TotalAnoGlobal => ListaMensal.Sum(m => m.VolumeTotal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+        anoSelecionado = DateTime.Now.Year;
+
+        ListaLojas = await Db.Lojas.OrderBy(l => l.NomeLoja).ToListAsync();
+        await Pesquisar();
+    }
+
+    private async Task Pesquisar()
+    {
+        DateOnly inicioAno = new DateOnly(anoSelecionado, 1, 1);
+        DateOnly fimAno = new DateOnly(anoSelecionado, 12, 31);
+
+        // 1. Definir Query
+        var query = Db.Movimentos
+                      .Where(m => m.DataMovimento >= inicioAno && m.DataMovimento <= fimAno);
+
+        if (lojaSelecionadaId > 0)
+        {
+            query = query.Where(m => m.IdLoja == lojaSelecionadaId);
+        }
+
+        // 2. Executar e Trazer Dados
+        var dadosRaw = await query.Select(m => new
+        {
+            m.DataMovimento,
+            ValorOn = m.ValorOn,
+            ValorOff = m.ValorOff
+        }).ToListAsync();
+
+        // 3. Agrupamento em Memória
+        var agrupado = dadosRaw
+            .GroupBy(m => m.DataMovimento.Month)
+            .Select(g => new MensalItem
+            {
+                MesNum = g.Key,
+                MesNome = CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(g.Key),
+                Entradas = (decimal)g.Sum(x => x.ValorOn),
+                Saidas = (decimal)g.Sum(x => x.ValorOff)
+            })
+            .OrderBy(x => x.MesNum)
+            .ToList();
+
+        // Capitalizar mês
+        agrupado.ForEach(m => m.MesNome = char.ToUpper(m.MesNome[0]) + m.MesNome.Substring(1));
+
+        ListaMensal = agrupado;
+    }
+
+    private void Voltar() => Nav.NavigateTo("/relatorios");
+
+    // =================================================================
+    // PDF GENERATION
+    // =================================================================
+    private async Task GerarPDF()
+    {
+        if (ListaMensal.Count == 0)
+        {
+            await JS.InvokeVoidAsync("alert", "Sem dados para gerar PDF.");
+            return;
+        }
+
+        string nomeLoja = lojaSelecionadaId == 0
+            ? "TODAS"
+            : ListaLojas.FirstOrDefault(l => l.IdLoja == lojaSelecionadaId)?.NomeLoja ?? "";
+
+        var documento = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4.Portrait());
+                page.Margin(1, Unit.Centimetre);
+                page.PageColor(Colors.White);
+                page.DefaultTextStyle(x => x.FontSize(10).FontFamily("Segoe UI"));
+
+                // Cabeçalho
+                page.Header().Row(row =>
+                {
+                    row.RelativeItem().Column(col =>
+                    {
+                        col.Item().Text("Evolução Mensal (Entradas vs Saídas)").FontSize(16).SemiBold().FontColor(Colors.Blue.Darken2);
+                        col.Item().Text($"Ano: {anoSelecionado}  |  Loja: {nomeLoja}").FontSize(11);
+                    });
+                    row.ConstantItem(100).AlignRight().Text(DateTime.Now.ToString("dd/MM/yyyy")).FontSize(9).FontColor(Colors.Grey.Medium);
+                });
+
+                // Tabela
+                page.Content().PaddingVertical(10).Table(table =>
+                {
+                    table.ColumnsDefinition(columns =>
+                    {
+                        columns.RelativeColumn(1f); // Mês
+                        columns.RelativeColumn(1f); // Entradas
+                        columns.RelativeColumn(1f); // Saídas
+                        columns.RelativeColumn(1f); // Total
+                    });
+
+                    table.Header(header =>
+                    {
+                        void HeaderCell(IContainer c, string t) =>
+                            c.Background(Colors.Grey.Darken3).Padding(5).AlignCenter().Text(t).FontColor(Colors.White).Bold();
+
+                        header.Cell().Element(c => HeaderCell(c, "Mês"));
+                        header.Cell().Element(c => HeaderCell(c, "Entradas (ON)"));
+                        header.Cell().Element(c => HeaderCell(c, "Saídas (OFF)"));
+                        header.Cell().Element(c => HeaderCell(c, "Total Global"));
+                    });
+
+                    for (int i = 0; i < ListaMensal.Count; i++)
+                    {
+                        var item = ListaMensal[i];
+                        var bgCor = (i % 2 == 0) ? Colors.White : Colors.Grey.Lighten4;
+
+                        IContainer CellStyle(IContainer c) => c.Background(bgCor).BorderBottom(1).BorderColor(Colors.Grey.Lighten3).Padding(5);
+
+                        table.Cell().Element(CellStyle).AlignLeft().Text(item.MesNome).Medium();
+                        table.Cell().Element(CellStyle).AlignRight().Text(item.Entradas.ToString("C2")).FontColor(Colors.Green.Darken2);
+                        table.Cell().Element(CellStyle).AlignRight().Text(item.Saidas.ToString("C2")).FontColor(Colors.Red.Medium);
+                        table.Cell().Element(CellStyle).AlignRight().Text(item.VolumeTotal.ToString("C2")).FontColor(Colors.Blue.Darken3).Bold();
+                    }
+
+                    // Rodapé Tabela
+                    table.Footer(footer =>
+                    {
+                        IContainer FooterStyle(IContainer c) => c.Background(Colors.Grey.Lighten2).BorderTop(1).Padding(5);
+
+                        footer.Cell().Element(FooterStyle).Text("TOTAIS DO ANO").Bold();
+                        footer.Cell().Element(FooterStyle).AlignRight().Text(TotalAnoEntradas.ToString("C2")).Bold();
+                        footer.Cell().Element(FooterStyle).AlignRight().Text(TotalAnoSaidas.ToString("C2")).Bold();
+                        footer.Cell().Element(FooterStyle).AlignRight().Text(TotalAnoGlobal.ToString("C2")).Bold();
+                    });
+                });
+
+                page.Footer().AlignCenter().Text(txt =>
+                {
+                    txt.Span("Página "); txt.CurrentPageNumber(); txt.Span(" de "); txt.TotalPages();
+                });
+            });
+        });
+
+        var pdfBytes = documento.GeneratePdf();
+        using var stream = new MemoryStream(pdfBytes);
+        using var streamRef = new DotNetStreamReference(stream);
+        await JS.InvokeVoidAsync("openPdfInNewTab", streamRef);
+    }
+}

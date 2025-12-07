@@ -1,0 +1,552 @@
+﻿@page "/relatorios/acumulados"
+@layout PaneGEST_Blazor_MySQL.Components.Layout.EmptyLayout
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PaneGEST_Blazor_MySQL.Models
+@using QuestPDF.Fluent
+@using QuestPDF.Helpers
+@using QuestPDF.Infrastructure
+@using System.IO
+@inject WwwpanetPaneGestContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Relatório de Acumulados</PageTitle>
+
+<div class="page-container">
+
+    <!-- TOPO: Filtros -->
+    <div class="top-panel">
+        <div class="filter-row">
+
+            <!-- Data Referência -->
+            <div class="filter-item">
+                <label>Data Referência:</label>
+                <input type="date" class="form-control" @bind="dataReferencia" />
+            </div>
+
+            <!-- Seleção de Loja -->
+            <div class="filter-item" style="flex-grow: 1; max-width: 300px;">
+                <label>Loja:</label>
+                <select class="form-control" @bind="lojaSelecionadaId">
+                    <option value="0">--- TODAS AS LOJAS ---</option>
+                    @foreach (var l in ListaLojas)
+                    {
+                        <option value="@l.IdLoja">@l.NomeLoja</option>
+                    }
+                </select>
+            </div>
+
+            <!-- Botão Gerar Mapa -->
+            <button class="btn btn-primary" @onclick="GerarMapa">🔍 Gerar Mapa</button>
+
+        </div>
+    </div>
+
+    <!-- MEIO: Tabela -->
+    <div class="grid-panel">
+        <table class="custom-table">
+            <thead>
+                <tr>
+                    <th class="col-desc">Indicadores</th>
+                    @foreach (var ano in AnosColunas)
+                    {
+                        <th class="col-ano">@ano</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @if (IsLoading)
+                {
+                    <tr><td colspan="@TotalColunas" class="text-center p-4">A processar dados... Por favor aguarde.</td></tr>
+                }
+                else if (DadosRelatorio.Count == 0)
+                {
+                    <tr><td colspan="@TotalColunas" class="text-center p-4 text-muted">Clique em "Gerar Mapa" para ver os dados.</td></tr>
+                }
+                else
+                {
+                    @foreach (var loja in DadosRelatorio)
+                    {
+                        <!-- Cabeçalho da Loja -->
+                        <tr class="row-shop-header">
+                            <td colspan="@TotalColunas">@loja.NomeLoja</td>
+                        </tr>
+
+                        <!-- Linhas de Dados (Sintaxe Corrigida) -->
+                        @RenderLinha("Venda Mensal (MTD)", loja.VendaMensal, true)
+                        @RenderLinha("Dif. Homóloga (€)", loja.DifHomologaVal, true, false, true)
+                        @RenderLinha("Dif. Homóloga (%)", loja.DifHomologaPerc, false, true, true)
+
+                        @RenderLinha("Acumulado Anual (YTD)", loja.AcumuladoAnual, true)
+                        @RenderLinha("Dif. Acumulada (€)", loja.DifAcumuladaVal, true, false, true)
+                        @RenderLinha("Dif. Acumulada (%)", loja.DifAcumuladaPerc, false, true, true)
+
+                        <!-- Separador -->
+                        <tr class="row-separator"><td colspan="@TotalColunas"></td></tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- RODAPÉ: Botões -->
+    <div class="bottom-panel">
+        <button class="btn btn-pdf" @onclick="GerarPDF">🖨️ Gerar PDF / Imprimir</button>
+        <button class="btn btn-back" @onclick="Voltar">🔙 Voltar</button>
+    </div>
+
+</div>
+
+@code {
+    // --- VIEW MODELS ---
+    public class LojaReportBlock
+    {
+        public string NomeLoja { get; set; } = "";
+        public Dictionary<int, decimal> VendaMensal { get; set; } = new();
+        public Dictionary<int, decimal> DifHomologaVal { get; set; } = new();
+        public Dictionary<int, decimal> DifHomologaPerc { get; set; } = new();
+        public Dictionary<int, decimal> AcumuladoAnual { get; set; } = new();
+        public Dictionary<int, decimal> DifAcumuladaVal { get; set; } = new();
+        public Dictionary<int, decimal> DifAcumuladaPerc { get; set; } = new();
+    }
+
+    public class MovimentoSimplificado
+    {
+        public int IdLoja { get; set; }
+        public DateOnly Data { get; set; }
+        public decimal Valor { get; set; }
+    }
+
+    // --- ESTADO ---
+    private List<Loja> ListaLojas = new();
+    private List<LojaReportBlock> DadosRelatorio = new();
+    private List<int> AnosColunas = new();
+
+    private DateTime dataReferencia;
+    private int lojaSelecionadaId = 0;
+    private bool IsLoading = false;
+
+    // Propriedade auxiliar para evitar avisos HTML no colspan
+    private int TotalColunas => AnosColunas.Count + 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+        dataReferencia = DateTime.Now;
+        ListaLojas = await Db.Lojas.OrderBy(l => l.IdLoja).ToListAsync();
+    }
+
+    private async Task GerarMapa()
+    {
+        IsLoading = true;
+        await Task.Delay(1); // Refresh UI
+
+        try
+        {
+            DadosRelatorio.Clear();
+            AnosColunas.Clear();
+
+            int anoRef = dataReferencia.Year;
+            int anoLimite = anoRef - 10; // 11 anos
+
+            // 1. Cabeçalho Anos
+            for (int i = 0; i <= 10; i++) AnosColunas.Add(anoRef - i);
+
+            // 2. Filtrar Lojas
+            List<Loja> lojasParaProcessar;
+            if (lojaSelecionadaId > 0)
+                lojasParaProcessar = ListaLojas.Where(l => l.IdLoja == lojaSelecionadaId).ToList();
+            else
+                lojasParaProcessar = ListaLojas;
+
+            // 3. Buscar Movimentos da BD
+            DateOnly dataLimite = new DateOnly(anoLimite, 1, 1);
+
+            var query = Db.Movimentos
+                .Where(m => m.DataMovimento >= dataLimite);
+
+            if (lojaSelecionadaId > 0)
+                query = query.Where(m => m.IdLoja == lojaSelecionadaId);
+
+            // CORREÇÃO: Cast explícito para decimal e remoção de nulos
+            var movimentosRaw = await query.Select(m => new MovimentoSimplificado
+            {
+                IdLoja = m.IdLoja,
+                Data = m.DataMovimento,
+                Valor = (decimal)(m.ValorOn + m.ValorOff)
+            }).ToListAsync();
+
+            // 4. Cálculos em Memória
+            foreach (var loja in lojasParaProcessar)
+            {
+                var bloco = new LojaReportBlock { NomeLoja = $"{loja.IdLoja} - {loja.NomeLoja}" };
+                var movsLoja = movimentosRaw.Where(m => m.IdLoja == loja.IdLoja).ToList();
+
+                foreach (var ano in AnosColunas)
+                {
+                    decimal valMes = CalcularSoma(movsLoja, ano, true);
+                    decimal valAcum = CalcularSoma(movsLoja, ano, false);
+
+                    bloco.VendaMensal[ano] = valMes;
+                    bloco.AcumuladoAnual[ano] = valAcum;
+
+                    // Comparação com ano anterior
+                    decimal valMesAnt = CalcularSoma(movsLoja, ano - 1, true);
+                    decimal valAcumAnt = CalcularSoma(movsLoja, ano - 1, false);
+
+                    bloco.DifHomologaVal[ano] = valMes - valMesAnt;
+                    bloco.DifAcumuladaVal[ano] = valAcum - valAcumAnt;
+
+                    bloco.DifHomologaPerc[ano] = valMesAnt != 0 ? ((valMes - valMesAnt) / valMesAnt) * 100 : 0;
+                    bloco.DifAcumuladaPerc[ano] = valAcumAnt != 0 ? ((valAcum - valAcumAnt) / valAcumAnt) * 100 : 0;
+                }
+                DadosRelatorio.Add(bloco);
+            }
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", "Erro ao processar: " + ex.Message);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private decimal CalcularSoma(List<MovimentoSimplificado> movs, int ano, bool apenasMes)
+    {
+        int mesRef = dataReferencia.Month;
+        int diaRef = dataReferencia.Day;
+
+        var movsAno = movs.Where(m => m.Data.Year == ano);
+
+        if (apenasMes) // MTD
+        {
+            return movsAno
+                .Where(m => m.Data.Month == mesRef && m.Data.Day <= diaRef)
+                .Sum(m => m.Valor);
+        }
+        else // YTD
+        {
+            return movsAno
+                .Where(m => m.Data.Month < mesRef || (m.Data.Month == mesRef && m.Data.Day <= diaRef))
+                .Sum(m => m.Valor);
+        }
+    }
+
+    // RenderFragment para desenhar linhas HTML de forma eficiente
+    private RenderFragment RenderLinha(string Titulo, Dictionary<int, decimal> Valores, bool IsCurrency = false, bool IsPercent = false, bool Colorize = false) => builder =>
+    {
+        builder.OpenElement(0, "tr");
+
+        // Título
+        builder.OpenElement(1, "td");
+        builder.AddAttribute(2, "class", "cell-title");
+        builder.AddContent(3, Titulo);
+        builder.CloseElement();
+
+        // Colunas
+        foreach (var ano in AnosColunas)
+        {
+            decimal val = Valores.ContainsKey(ano) ? Valores[ano] : 0;
+            string display = IsPercent ? val.ToString("N2") + "%" : val.ToString("N2");
+
+            string cssClass = "cell-val";
+            if (Colorize)
+            {
+                if (val < 0) cssClass += " val-neg";
+                else if (val > 0 && IsPercent) cssClass += " val-pos";
+            }
+
+            builder.OpenElement(4, "td");
+            builder.AddAttribute(5, "class", cssClass);
+            builder.AddContent(6, display);
+            builder.CloseElement();
+        }
+        builder.CloseElement();
+    };
+
+    private void Voltar() => Nav.NavigateTo("/relatorios");
+
+    // =================================================================
+    // PDF GENERATION (Landscape)
+    // =================================================================
+    private async Task GerarPDF()
+    {
+        if (DadosRelatorio.Count == 0)
+        {
+            await JS.InvokeVoidAsync("alert", "Gere o mapa primeiro.");
+            return;
+        }
+
+        var documento = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4.Landscape());
+                page.Margin(1, Unit.Centimetre);
+                page.PageColor(Colors.White);
+                page.DefaultTextStyle(x => x.FontSize(8).FontFamily("Segoe UI"));
+
+                // Cabeçalho
+                page.Header().Column(col =>
+                {
+                    col.Item().Row(row =>
+                    {
+                        row.RelativeItem().Column(c =>
+                        {
+                            c.Item().Text("Relatório de Acumulados").FontSize(14).SemiBold().FontColor(Colors.Blue.Darken2);
+                            c.Item().Text($"Data Ref: {dataReferencia:dd/MM/yyyy}");
+                        });
+                        row.ConstantItem(100).AlignRight().Text(DateTime.Now.ToString("HH:mm"));
+                    });
+
+                    col.Item().Height(10);
+
+                    // Cabeçalho Tabela PDF
+                    col.Item().Table(table =>
+                    {
+                        DefinirColunasPDF(table);
+
+                        table.Header(header =>
+                        {
+                            header.Cell().Background(Colors.Grey.Darken3).Padding(4).Text("Indicadores").FontColor(Colors.White).Bold();
+                            foreach (var ano in AnosColunas)
+                            {
+                                header.Cell().Background(Colors.Grey.Darken3).Padding(4).AlignRight().Text(ano.ToString()).FontColor(Colors.White).Bold();
+                            }
+                        });
+                    });
+                });
+
+                // Conteúdo
+                page.Content().PaddingVertical(5).Column(col =>
+                {
+                    foreach (var loja in DadosRelatorio)
+                    {
+                        col.Item().ShowEntire().Table(table =>
+                        {
+                            DefinirColunasPDF(table);
+
+                            // Cabeçalho Loja
+                            table.Cell().ColumnSpan((uint)TotalColunas)
+                                .Background("#F5DEB3").Padding(5)
+                                .Text(loja.NomeLoja).Bold().FontSize(10);
+
+                            // Linhas
+                            AdicionarLinhaPDF(table, "Venda Mensal (MTD)", loja.VendaMensal);
+                            AdicionarLinhaPDF(table, "Dif. Homóloga (€)", loja.DifHomologaVal, colorize: true);
+                            AdicionarLinhaPDF(table, "Dif. Homóloga (%)", loja.DifHomologaPerc, isPercent: true, colorize: true);
+
+                            AdicionarLinhaPDF(table, "Acumulado Anual (YTD)", loja.AcumuladoAnual);
+                            AdicionarLinhaPDF(table, "Dif. Acumulada (€)", loja.DifAcumuladaVal, colorize: true);
+                            AdicionarLinhaPDF(table, "Dif. Acumulada (%)", loja.DifAcumuladaPerc, isPercent: true, colorize: true);
+                        });
+
+                        col.Item().Height(10);
+                    }
+                });
+
+                // Rodapé
+                page.Footer().AlignCenter().Text(txt =>
+                {
+                    txt.Span("Página "); txt.CurrentPageNumber(); txt.Span(" de "); txt.TotalPages();
+                });
+            });
+        });
+
+        var pdfBytes = documento.GeneratePdf();
+        using var stream = new MemoryStream(pdfBytes);
+        using var streamRef = new DotNetStreamReference(stream);
+        await JS.InvokeVoidAsync("openPdfInNewTab", streamRef);
+    }
+
+    private void DefinirColunasPDF(TableDescriptor table)
+    {
+        table.ColumnsDefinition(columns =>
+        {
+            columns.RelativeColumn(2.5f); // Coluna Descrição
+            for (int i = 0; i < AnosColunas.Count; i++) columns.RelativeColumn(1);
+        });
+    }
+
+    private void AdicionarLinhaPDF(TableDescriptor table, string titulo, Dictionary<int, decimal> valores, bool isPercent = false, bool colorize = false)
+    {
+        table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).Padding(3).Text(titulo).Medium();
+
+        foreach (var ano in AnosColunas)
+        {
+            decimal val = valores.ContainsKey(ano) ? valores[ano] : 0;
+            string txt = isPercent ? val.ToString("N2") + "%" : val.ToString("N2");
+
+            string color = Colors.Black;
+            if (colorize)
+            {
+                if (val < 0) color = Colors.Red.Medium;
+                else if (val > 0 && isPercent) color = Colors.Green.Darken2;
+            }
+
+            table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).Padding(3).AlignRight().Text(txt).FontColor(color).FontSize(8);
+        }
+    }
+}
+
+<style>
+    /* Layout */
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-family: 'Segoe UI', sans-serif;
+        background-color: white;
+    }
+
+    .top-panel {
+        padding: 15px 20px;
+        background-color: white;
+        border-bottom: 1px solid #ccc;
+    }
+
+    .filter-row {
+        display: flex;
+        gap: 20px;
+        align-items: flex-end;
+    }
+
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+        .filter-item label {
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #333;
+        }
+
+    .form-control {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+    /* Grid */
+    .grid-panel {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 0;
+    }
+
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1200px;
+    }
+
+        .custom-table th {
+            background-color: #4682B4;
+            color: white;
+            padding: 10px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            font-size: 0.9rem;
+        }
+
+    .col-desc {
+        width: 250px;
+        text-align: left;
+        left: 0;
+        position: sticky;
+        z-index: 11;
+        background-color: #4682B4;
+    }
+
+    .col-ano {
+        min-width: 90px;
+        text-align: right;
+    }
+
+    .custom-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #eee;
+        font-size: 0.85rem;
+    }
+
+    /* Estilos de Linha */
+    .row-shop-header td {
+        background-color: #F5DEB3;
+        font-weight: bold;
+        font-size: 1rem;
+        color: #333;
+        padding: 10px;
+    }
+
+    .row-separator td {
+        background-color: white;
+        height: 10px;
+        border: none;
+    }
+
+    .cell-title {
+        font-weight: 500;
+        background-color: #fcfcfc;
+        position: sticky;
+        left: 0;
+        border-right: 1px solid #ddd;
+    }
+
+    .cell-val {
+        text-align: right;
+    }
+
+    /* Cores de Valores */
+    .val-neg {
+        color: #dc3545;
+        font-weight: 500;
+    }
+
+    .val-pos {
+        color: #198754;
+        font-weight: 500;
+    }
+
+    /* Bottom Panel */
+    .bottom-panel {
+        padding: 15px 20px;
+        background-color: #D3D3D3;
+        display: flex;
+        justify-content: space-between;
+        border-top: 1px solid #aaa;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+        color: white;
+    }
+
+    .btn-primary {
+        background-color: #0d6efd;
+        height: 38px;
+    }
+
+    .btn-pdf {
+        background-color: #198754;
+    }
+
+    .btn-back {
+        background-color: #CD5C5C;
+    }
+
+    .btn:hover {
+        opacity: 0.9;
+    }
+</style>

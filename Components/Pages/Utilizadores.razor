@@ -1,0 +1,362 @@
+﻿@page "/utilizadores"
+@layout PaneGEST_Blazor_MySQL.Components.Layout.EmptyLayout
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PaneGEST_Blazor_MySQL.Models
+@inject WwwpanetPaneGestContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Gestão de Utilizadores</PageTitle>
+
+<div class="page-container">
+    <div class="split-container">
+
+        <!-- PAINEL ESQUERDO: GRELHA -->
+        <div class="left-panel">
+            <table class="custom-table">
+                <thead>
+                    <tr>
+                        <!-- Cabeçalhos clicáveis para ordenar -->
+                        <th style="width: 60px; cursor: pointer;" @onclick='() => Ordenar("id")'>
+                            ID @(sortColumn == "id" ? (isAscending ? "▲" : "▼") : "")
+                        </th>
+                        <th style="cursor: pointer;" @onclick='() => Ordenar("nome")'>
+                            Nome @(sortColumn == "nome" ? (isAscending ? "▲" : "▼") : "")
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var u in ListaUtilizadores)
+                    {
+                        <tr class="@(u.IdUtilizador == userSelecionado?.IdUtilizador ? "selected" : "")"
+                            @onclick="() => SelecionarUtilizador(u)">
+                            <td>@u.IdUtilizador</td>
+                            <td>@u.Nome</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- PAINEL DIREITO: FORMULÁRIO -->
+        <div class="right-panel">
+            <h3 class="form-title">Detalhes do Utilizador</h3>
+
+            <div class="form-group">
+                <label>ID:</label>
+                <input type="text" class="form-control" value="@(userSelecionado?.IdUtilizador.ToString() ?? "")" disabled />
+            </div>
+
+            <div class="form-group">
+                <label>Utilizador:</label>
+                <input type="text" class="form-control" @bind="formNome" disabled="@(!emEdicao)" />
+            </div>
+
+            <div class="form-group">
+                <label>Password:</label>
+                <input type="password" class="form-control" @bind="formPass" disabled="@(!emEdicao)" placeholder="@(emEdicao ? "Nova password..." : "")" />
+            </div>
+
+            @if (emEdicao)
+            {
+                <div class="form-buttons">
+                    <button class="btn btn-action" @onclick="Guardar">💾 Guardar</button>
+                    <button class="btn btn-danger" @onclick="Cancelar">❌ Cancelar</button>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="bottom-bar">
+        <div class="left-actions">
+            <button class="btn btn-primary" @onclick="Novo" disabled="@emEdicao">➕ Novo</button>
+            <button class="btn btn-action" @onclick="Editar" disabled="@(emEdicao || userSelecionado == null)">✏️ Editar</button>
+            <button class="btn btn-danger" @onclick="Apagar" disabled="@(emEdicao || userSelecionado == null)">🗑️ Apagar</button>
+        </div>
+        <div class="right-actions">
+            <button class="btn btn-voltar" @onclick="Voltar">⬅ Voltar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Mantenha o CSS igual ao anterior */
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    .split-container {
+        flex-grow: 1;
+        display: flex;
+        overflow: hidden;
+    }
+
+    .left-panel {
+        flex-grow: 1;
+        overflow-y: auto;
+        border-right: 1px solid #ddd;
+        background-color: white;
+    }
+
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+        .custom-table th {
+            background-color: #f1f1f1;
+            padding: 10px;
+            text-align: left;
+            border-bottom: 2px solid #ddd;
+            position: sticky;
+            top: 0;
+            user-select: none;
+        }
+
+            .custom-table th:hover {
+                background-color: #e2e2e2;
+            }
+        /* Efeito visual no hover do header */
+        .custom-table td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+
+        .custom-table tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        .custom-table tr.selected {
+            background-color: #e0efff;
+            font-weight: bold;
+            border-left: 4px solid #007bff;
+        }
+
+    .right-panel {
+        width: 320px;
+        padding: 25px;
+        background-color: white;
+        box-shadow: -2px 0 5px rgba(0,0,0,0.05);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-title {
+        color: #6610F2;
+        margin-bottom: 20px;
+        font-size: 16pt;
+    }
+
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+        .form-group label {
+            display: block;
+            color: gray;
+            font-size: 10pt;
+            margin-bottom: 5px;
+        }
+
+    .form-control {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+        .form-control:disabled {
+            background-color: #f5f5f5;
+            color: #555;
+        }
+
+    .form-buttons {
+        margin-top: 20px;
+        display: flex;
+        gap: 10px;
+    }
+
+    .bottom-bar {
+        height: 70px;
+        background-color: #DCDCDC;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        border-top: 1px solid #ccc;
+        flex-shrink: 0;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+        color: white;
+        font-size: 10pt;
+    }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: gray;
+        }
+
+    .btn-primary {
+        background-color: #0d6efd;
+    }
+
+    .btn-action {
+        background-color: #198754;
+    }
+
+    .btn-danger {
+        background-color: #dc3545;
+    }
+
+    .btn-voltar {
+        background-color: #B22222;
+    }
+
+    .left-actions {
+        display: flex;
+        gap: 15px;
+    }
+</style>
+
+@code {
+    private List<Utilizador> ListaUtilizadores = new();
+    private Utilizador? userSelecionado;
+    private string formNome = "";
+    private string formPass = "";
+    private bool emEdicao = false;
+    private bool novoRegisto = false;
+
+    // VARIÁVEIS DE ORDENAÇÃO
+    private string sortColumn = "nome"; // Padrão: nome
+    private bool isAscending = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CarregarDados();
+    }
+
+    private async Task CarregarDados()
+    {
+        var dados = await Db.Utilizadores.ToListAsync();
+        // Aplica a ordenação inicial
+        AplicarOrdenacao(dados);
+    }
+
+    // MÉTODO DE ORDENAÇÃO (Ao clicar no cabeçalho)
+    private void Ordenar(string coluna)
+    {
+        if (sortColumn == coluna)
+        {
+            isAscending = !isAscending; // Inverte a direção se clicar no mesmo
+        }
+        else
+        {
+            sortColumn = coluna;
+            isAscending = true; // Reseta para ascendente se mudar de coluna
+        }
+
+        // Reordena a lista atual em memória (sem ir à BD)
+        AplicarOrdenacao(ListaUtilizadores);
+    }
+
+    private void AplicarOrdenacao(List<Utilizador> lista)
+    {
+        if (sortColumn == "id")
+        {
+            ListaUtilizadores = isAscending
+                ? lista.OrderBy(u => u.IdUtilizador).ToList()
+                : lista.OrderByDescending(u => u.IdUtilizador).ToList();
+        }
+        else // nome
+        {
+            ListaUtilizadores = isAscending
+                ? lista.OrderBy(u => u.Nome).ToList()
+                : lista.OrderByDescending(u => u.Nome).ToList();
+        }
+    }
+
+    private void SelecionarUtilizador(Utilizador u)
+    {
+        if (emEdicao) return;
+        userSelecionado = u;
+        formNome = u.Nome;
+        formPass = "";
+    }
+
+    private void Novo()
+    {
+        userSelecionado = new Utilizador();
+        formNome = ""; formPass = "";
+        novoRegisto = true; emEdicao = true;
+    }
+
+    private void Editar()
+    {
+        if (userSelecionado == null) return;
+        novoRegisto = false; emEdicao = true;
+    }
+
+    private async Task Apagar()
+    {
+        if (userSelecionado == null) return;
+        if (await JS.InvokeAsync<bool>("confirm", "Apagar este utilizador?"))
+        {
+            Db.Utilizadores.Remove(userSelecionado);
+            await Db.SaveChangesAsync();
+            userSelecionado = null; formNome = "";
+            await CarregarDados();
+        }
+    }
+
+    private void Voltar() => Nav.NavigateTo("/dashboard");
+
+    private async Task Guardar()
+    {
+        if (string.IsNullOrWhiteSpace(formNome)) { await JS.InvokeVoidAsync("alert", "Nome obrigatório."); return; }
+
+        try
+        {
+            if (novoRegisto)
+            {
+                if (string.IsNullOrWhiteSpace(formPass)) { await JS.InvokeVoidAsync("alert", "Password obrigatória."); return; }
+                var novo = new Utilizador { Nome = formNome, PasswordHash = BCrypt.Net.BCrypt.HashPassword(formPass) };
+                Db.Utilizadores.Add(novo);
+            }
+            else
+            {
+                var dbUser = await Db.Utilizadores.FindAsync(userSelecionado!.IdUtilizador);
+                if (dbUser != null)
+                {
+                    dbUser.Nome = formNome;
+                    if (!string.IsNullOrWhiteSpace(formPass)) dbUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(formPass);
+                }
+            }
+            await Db.SaveChangesAsync();
+            emEdicao = false; novoRegisto = false; formPass = ""; userSelecionado = null; formNome = "";
+            await CarregarDados();
+        }
+        catch (Exception ex) { await JS.InvokeVoidAsync("alert", "Erro: " + ex.Message); }
+    }
+
+    private void Cancelar()
+    {
+        emEdicao = false; novoRegisto = false;
+        if (userSelecionado != null && userSelecionado.IdUtilizador > 0) formNome = userSelecionado.Nome;
+        else { userSelecionado = null; formNome = ""; }
+        formPass = "";
+    }
+}

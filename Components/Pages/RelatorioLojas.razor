@@ -1,0 +1,327 @@
+﻿@page "/relatorios/lojas"
+@layout PaneGEST_Blazor_MySQL.Components.Layout.EmptyLayout
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PaneGEST_Blazor_MySQL.Models
+@using QuestPDF.Fluent
+@using QuestPDF.Helpers
+@using QuestPDF.Infrastructure
+@using System.IO
+@inject WwwpanetPaneGestContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Relatório de Lojas</PageTitle>
+
+<div class="page-container">
+
+    <!-- TOPO: Filtros -->
+    <div class="top-panel">
+        <div class="filter-group">
+            <label>Filtrar por Nome da Loja:</label>
+            <input type="text" class="form-control"
+                   @bind="textoFiltro"
+                   @bind:event="oninput"
+                   @onkeyup="AplicarFiltros"
+                   placeholder="Escreva para pesquisar..." />
+        </div>
+    </div>
+
+    <!-- MEIO: Tabela -->
+    <div class="grid-panel">
+        <table class="custom-table">
+            <thead>
+                <tr>
+                    <!-- Clicar nos TH ordena a coluna -->
+                    <th style="width: 80px; cursor: pointer; text-align: center;" @onclick='() => Ordenar("id")'>
+                        ID @(sortColumn == "id" ? (isAscending ? "▲" : "▼") : "")
+                    </th>
+                    <th style="cursor: pointer; width: 30%;" @onclick='() => Ordenar("nome")'>
+                        Nome da Loja @(sortColumn == "nome" ? (isAscending ? "▲" : "▼") : "")
+                    </th>
+                    <th style="cursor: pointer;" @onclick='() => Ordenar("obs")'>
+                        Observações @(sortColumn == "obs" ? (isAscending ? "▲" : "▼") : "")
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var l in ListaFiltrada)
+                {
+                    <tr>
+                        <td style="text-align: center;">@l.IdLoja</td>
+                        <td style="font-weight: 500;">@l.NomeLoja</td>
+                        <td style="color: #555;">@(l.Observacoes ?? "")</td>
+                    </tr>
+                }
+                @if (ListaFiltrada.Count == 0)
+                {
+                    <tr><td colspan="3" style="text-align: center; color: gray; padding: 20px;">Sem dados correspondentes.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- RODAPÉ: Botões -->
+    <div class="bottom-panel">
+        <button class="btn btn-pdf" @onclick="GerarPDF">🖨️ Gerar PDF / Imprimir</button>
+        <button class="btn btn-back" @onclick="Voltar">🔙 Voltar</button>
+    </div>
+
+</div>
+
+<style>
+    /* Layout Flexbox para ocupar a altura total */
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-family: 'Segoe UI', sans-serif;
+        background-color: white;
+    }
+
+    /* Topo */
+    .top-panel {
+        padding: 20px;
+        background-color: white;
+        border-bottom: 1px solid #ccc;
+        display: flex;
+        align-items: center;
+    }
+
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+    }
+
+        .filter-group label {
+            font-weight: bold;
+            color: #333;
+        }
+
+    .form-control {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        width: 300px;
+    }
+
+    /* Grid */
+    .grid-panel {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 0;
+    }
+
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+        .custom-table th {
+            background-color: #4682B4; /* SteelBlue */
+            color: white;
+            padding: 12px;
+            position: sticky;
+            top: 0;
+            user-select: none;
+            border-right: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .custom-table td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .custom-table tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        .custom-table tr:hover {
+            background-color: #eef;
+        }
+
+    /* Rodapé */
+    .bottom-panel {
+        padding: 15px 20px;
+        background-color: #D3D3D3; /* LightGray */
+        display: flex;
+        justify-content: space-between;
+        border-top: 1px solid #aaa;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+        color: white;
+        font-size: 1rem;
+    }
+
+    .btn-pdf {
+        background-color: #198754; /* Action Green */
+    }
+
+    .btn-back {
+        background-color: #CD5C5C; /* IndianRed */
+    }
+
+    .btn:hover {
+        opacity: 0.9;
+    }
+</style>
+
+@code {
+    // Dados
+    private List<Loja> ListaOriginal = new();
+    private List<Loja> ListaFiltrada = new();
+    private string textoFiltro = "";
+
+    // Ordenação
+    private string sortColumn = "nome";
+    private bool isAscending = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 1. Configurar Licença QuestPDF
+        QuestPDF.Settings.License = LicenseType.Community;
+
+        // 2. Carregar Dados da Tabela Lojas
+        ListaOriginal = await Db.Lojas.ToListAsync();
+
+        // 3. Aplicar Filtro Inicial
+        AplicarFiltros();
+    }
+
+    // --- LÓGICA DE FILTRO E ORDENAÇÃO ---
+
+    private void AplicarFiltros()
+    {
+        // 1. Filtrar
+        IEnumerable<Loja> query = ListaOriginal;
+
+        if (!string.IsNullOrWhiteSpace(textoFiltro))
+        {
+            query = query.Where(l => l.NomeLoja.Contains(textoFiltro, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // 2. Ordenar
+        if (sortColumn == "id")
+        {
+            query = isAscending
+                ? query.OrderBy(l => l.IdLoja)
+                : query.OrderByDescending(l => l.IdLoja);
+        }
+        else if (sortColumn == "nome")
+        {
+            query = isAscending
+                ? query.OrderBy(l => l.NomeLoja)
+                : query.OrderByDescending(l => l.NomeLoja);
+        }
+        else // obs
+        {
+            query = isAscending
+                ? query.OrderBy(l => l.Observacoes)
+                : query.OrderByDescending(l => l.Observacoes);
+        }
+
+        ListaFiltrada = query.ToList();
+    }
+
+    private void Ordenar(string col)
+    {
+        if (sortColumn == col) isAscending = !isAscending;
+        else { sortColumn = col; isAscending = true; }
+
+        AplicarFiltros();
+    }
+
+    private void Voltar() => Nav.NavigateTo("/relatorios");
+
+    // --- GERAR PDF COM QUESTPDF ---
+
+    private async Task GerarPDF()
+    {
+        if (ListaFiltrada.Count == 0)
+        {
+            await JS.InvokeVoidAsync("alert", "Não há dados para exportar.");
+            return;
+        }
+
+        var documento = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4.Portrait());
+                page.Margin(1, Unit.Centimetre);
+                page.PageColor(Colors.White);
+                page.DefaultTextStyle(x => x.FontSize(10).FontFamily("Segoe UI"));
+
+                // Cabeçalho
+                page.Header().Row(row =>
+                {
+                    row.RelativeItem().Column(col =>
+                    {
+                        col.Item().Text("Listagem de Lojas").FontSize(16).SemiBold().FontColor(Colors.Blue.Darken2);
+                        if (!string.IsNullOrEmpty(textoFiltro))
+                        {
+                            col.Item().Text("Filtro aplicado: " + textoFiltro).FontSize(11);
+                        }
+                    });
+                    row.ConstantItem(100).AlignRight().Text(DateTime.Now.ToString("dd/MM/yyyy")).FontSize(9).FontColor(Colors.Grey.Medium);
+                });
+
+                // Tabela
+                page.Content().PaddingVertical(10).Table(table =>
+                {
+                    // Definição das Colunas (ID, Nome, Observações)
+                    table.ColumnsDefinition(columns =>
+                    {
+                        columns.ConstantColumn(50);   // ID
+                        columns.RelativeColumn(1.5f); // Nome
+                        columns.RelativeColumn(2.5f); // Obs
+                    });
+
+                    // Cabeçalhos
+                    table.Header(header =>
+                    {
+                        header.Cell().Background(Colors.Grey.Darken3).Padding(4).AlignCenter().Text("ID").FontColor(Colors.White).Bold();
+                        header.Cell().Background(Colors.Grey.Darken3).Padding(4).AlignLeft().Text("Nome da Loja").FontColor(Colors.White).Bold();
+                        header.Cell().Background(Colors.Grey.Darken3).Padding(4).AlignLeft().Text("Observações").FontColor(Colors.White).Bold();
+                    });
+
+                    // Linhas
+                    for (int i = 0; i < ListaFiltrada.Count; i++)
+                    {
+                        var item = ListaFiltrada[i];
+                        var bgCor = (i % 2 == 0) ? Colors.White : Colors.Grey.Lighten4;
+
+                        table.Cell().Background(bgCor).BorderBottom(1).BorderColor(Colors.Grey.Lighten3).Padding(4).AlignCenter().Text(item.IdLoja.ToString());
+                        table.Cell().Background(bgCor).BorderBottom(1).BorderColor(Colors.Grey.Lighten3).Padding(4).AlignLeft().Text(item.NomeLoja);
+                        table.Cell().Background(bgCor).BorderBottom(1).BorderColor(Colors.Grey.Lighten3).Padding(4).AlignLeft().Text(item.Observacoes ?? "");
+                    }
+                });
+
+                // Rodapé
+                page.Footer().AlignCenter().Text(txt =>
+                {
+                    txt.Span("Página ");
+                    txt.CurrentPageNumber();
+                    txt.Span(" de ");
+                    txt.TotalPages();
+                });
+            });
+        });
+
+        // Gerar e Abrir
+        var pdfBytes = documento.GeneratePdf();
+        using var stream = new MemoryStream(pdfBytes);
+        using var streamRef = new DotNetStreamReference(stream);
+        await JS.InvokeVoidAsync("openPdfInNewTab", streamRef);
+    }
+}

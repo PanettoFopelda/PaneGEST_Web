@@ -1,0 +1,326 @@
+﻿@page "/relatorios"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PaneGEST_Blazor_MySQL.Models
+@using ApexCharts
+@using System.Globalization
+@inject WwwpanetPaneGestContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Menu de Relatórios</PageTitle>
+
+<div class="container-fluid p-4">
+
+    <!-- TÍTULO -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="text-primary fw-bold mb-0">📊 Painel de Relatórios</h2>
+            <p class="text-muted">Visão geral e acesso aos mapas de gestão.</p>
+        </div>
+    </div>
+
+    <!-- SEÇÃO 1: GRÁFICO RESUMO COM FILTROS -->
+    <div class="row mb-4">
+        <div class="col-lg-8 mx-auto">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white pt-3 pb-0 border-0">
+                    <!-- FILTROS DE ANO E MÊS -->
+                    <div class="row g-2 align-items-center justify-content-center">
+                        <div class="col-auto">
+                            <label class="fw-bold me-2">Ano:</label>
+                            <input type="number" @bind="selectedYear" class="form-control d-inline-block" style="width: 80px;" min="2000" max="2100" />
+                        </div>
+                        <div class="col-auto">
+                            <label class="fw-bold ms-2 me-2">Mês:</label>
+                            <select @bind="selectedMonth" class="form-control d-inline-block" style="width: 150px;">
+                                <option value="0">-- Todo o Ano --</option>
+                                <option value="1">Janeiro</option>
+                                <option value="2">Fevereiro</option>
+                                <option value="3">Março</option>
+                                <option value="4">Abril</option>
+                                <option value="5">Maio</option>
+                                <option value="6">Junho</option>
+                                <option value="7">Julho</option>
+                                <option value="8">Agosto</option>
+                                <option value="9">Setembro</option>
+                                <option value="10">Outubro</option>
+                                <option value="11">Novembro</option>
+                                <option value="12">Dezembro</option>
+                            </select>
+                        </div>
+                        <div class="col-auto">
+                            <button class="btn btn-primary" @onclick="CarregarDados">🔄 Atualizar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card-body">
+                    <h5 class="card-title text-center text-secondary mb-4 mt-2">
+                        Distribuição de Faturação - @TituloGrafico
+                    </h5>
+
+                    @if (IsLoading)
+                    {
+                        <div class="text-center p-5 text-muted">A carregar dados...</div>
+                    }
+                    else if (DadosGrafico.Count == 0)
+                    {
+                        <div class="text-center p-5 text-muted">Sem dados registados neste período.</div>
+                    }
+                    else
+                    {
+                        <ApexChart TItem="DashboardItem"
+                                   Title=""
+                                   Options="OpcoesGrafico">
+
+                            <ApexPointSeries TItem="DashboardItem"
+                                             Items="DadosGrafico"
+                                             Name="Faturação"
+                                             SeriesType="SeriesType.Donut"
+                                             XValue="@(e => e.NomeLoja)"
+                                             YValue="@(e => e.ValorTotal)"
+                                             ShowDataLabels="true" />
+                        </ApexChart>
+
+                        <div class="text-center mt-3">
+                            <h3 class="fw-bold text-success">@TotalPeriodo.ToString("C2")</h3>
+                            <small class="text-muted">Total Global (@TituloGrafico)</small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEÇÃO 2: BOTÕES DE NAVEGAÇÃO -->
+    <div class="row g-4">
+
+        <!-- Grupo: Financeiro -->
+        <div class="col-12"><h5 class="border-bottom pb-2">💰 Financeiro & Mapas</h5></div>
+
+        <div class="col-md-6 col-lg-3">
+            <div class="card-menu bg-indigo" @onclick='() => Nav.NavigateTo("/relatorios/mensal")'>
+                <div class="icon">📈</div>
+                <div class="title">Evolução Mensal</div>
+                <div class="desc">Comparativo mês a mês do ano.</div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-lg-3">
+            <div class="card-menu bg-green" @onclick='() => Nav.NavigateTo("/relatorios/balanco")'>
+                <div class="icon">⚖️</div>
+                <div class="title">Balanço por Loja</div>
+                <div class="desc">Totais consolidados por estabelecimento.</div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-lg-3">
+            <div class="card-menu bg-teal" @onclick='() => Nav.NavigateTo("/relatorios/acumulados")'>
+                <div class="icon">📊</div>
+                <div class="title">Mapa de Acumulados</div>
+                <div class="desc">Histórico comparativo de 10 anos.</div>
+            </div>
+        </div>
+
+        <!-- Grupo: Tabelas & Configuração -->
+        <div class="col-12 mt-4"><h5 class="border-bottom pb-2">⚙️ Tabelas & Configuração</h5></div>
+
+        <!-- MOVIMENTOS DETALHADOS (Movido para aqui conforme pedido) -->
+        <div class="col-md-6 col-lg-3">
+            <div class="card-menu bg-blue" @onclick='() => Nav.NavigateTo("/relatorios/movimentos")'>
+                <div class="icon">📅</div>
+                <div class="title">Movimentos Detalhados</div>
+                <div class="desc">Listagem diária de entradas e saídas.</div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-lg-3">
+            <div class="card-menu bg-orange" @onclick='() => Nav.NavigateTo("/relatorios/lojas")'>
+                <div class="icon">🏪</div>
+                <div class="title">Lojas</div>
+                <div class="desc">Listagem e detalhes de lojas.</div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-lg-3">
+            <div class="card-menu bg-red" @onclick='() => Nav.NavigateTo("/relatorios/utilizadores")'>
+                <div class="icon">👥</div>
+                <div class="title">Utilizadores</div>
+                <div class="desc">Gestão de acessos e logins.</div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+    /* Estilo dos Cartões de Menu */
+    .card-menu {
+        border-radius: 10px;
+        padding: 20px;
+        color: white;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+        .card-menu:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+        }
+
+        .card-menu .icon {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .card-menu .title {
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .card-menu .desc {
+            font-size: 0.85rem;
+            opacity: 0.9;
+        }
+
+    /* Cores Personalizadas */
+    .bg-blue {
+        background: linear-gradient(135deg, #0d6efd, #0a58ca);
+    }
+
+    .bg-indigo {
+        background: linear-gradient(135deg, #6610f2, #520dc2);
+    }
+
+    .bg-green {
+        background: linear-gradient(135deg, #198754, #146c43);
+    }
+
+    .bg-teal {
+        background: linear-gradient(135deg, #20c997, #1aa179);
+    }
+
+    .bg-orange {
+        background: linear-gradient(135deg, #fd7e14, #ca6510);
+    }
+
+    .bg-red {
+        background: linear-gradient(135deg, #dc3545, #b02a37);
+    }
+</style>
+
+@code {
+    public class DashboardItem
+    {
+        public string NomeLoja { get; set; } = "";
+        public decimal ValorTotal { get; set; }
+    }
+
+    // Variáveis de Estado
+    private List<DashboardItem> DadosGrafico = new();
+    private decimal TotalPeriodo => DadosGrafico.Sum(x => x.ValorTotal);
+    private bool IsLoading = true;
+
+    // Filtros
+    private int selectedYear = DateTime.Now.Year;
+    private int selectedMonth = 0; // 0 = Todo o ano
+
+    private string TituloGrafico => selectedMonth == 0
+        ? $"{selectedYear}"
+        : $"{CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(selectedMonth)} {selectedYear}";
+
+    private ApexChartOptions<DashboardItem> OpcoesGrafico = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Configurações visuais do Gráfico (Usando new() para evitar erro CS0246)
+        OpcoesGrafico.Legend = new Legend { Position = LegendPosition.Bottom };
+        OpcoesGrafico.PlotOptions = new PlotOptions
+        {
+            Pie = new PlotOptionsPie
+            {
+                Donut = new()
+                {
+                    Labels = new()
+                    {
+                        Show = true,
+                        Total = new()
+                        {
+                            Show = true,
+                            Label = "Total",
+                            Color = "#000000",
+                            Formatter = @"function (w) {
+                                return w.globals.seriesTotals.reduce((a, b) => { return a + b }, 0).toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' })
+                            }"
+                        }
+                    }
+                }
+            }
+        };
+
+        await CarregarDados();
+    }
+
+    private async Task CarregarDados()
+    {
+        IsLoading = true;
+        // Pequeno delay para a UI atualizar
+        await Task.Delay(1);
+
+        try
+        {
+            DateOnly inicio, fim;
+
+            // Lógica de Datas
+            if (selectedMonth == 0) // Todo o ano
+            {
+                inicio = new DateOnly(selectedYear, 1, 1);
+                fim = new DateOnly(selectedYear, 12, 31);
+            }
+            else // Mês específico
+            {
+                inicio = new DateOnly(selectedYear, selectedMonth, 1);
+                int ultDia = DateTime.DaysInMonth(selectedYear, selectedMonth);
+                fim = new DateOnly(selectedYear, selectedMonth, ultDia);
+            }
+
+            // Consulta BD
+            var dadosRaw = await (from m in Db.Movimentos
+                                  join l in Db.Lojas on m.IdLoja equals l.IdLoja
+                                  where m.DataMovimento >= inicio && m.DataMovimento <= fim
+                                  group m by l.NomeLoja into g
+                                  select new
+                                  {
+                                      Loja = g.Key,
+                                      // Cast seguro e tratamento de nulos
+                                      Total = (decimal)g.Sum(x => x.ValorOn + x.ValorOff)
+                                  }).ToListAsync();
+
+            DadosGrafico = dadosRaw.Select(d => new DashboardItem
+            {
+                NomeLoja = d.Loja,
+                ValorTotal = d.Total
+            })
+            .OrderByDescending(d => d.ValorTotal)
+            .ToList();
+        }
+        catch (Exception)
+        {
+            // Ignorar erros silenciosamente no dashboard
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
